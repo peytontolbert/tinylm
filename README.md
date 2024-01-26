@@ -1,0 +1,1 @@
+Simple implementation of mixture of experts transformer in pytorch. Model trained on personal dataset with okayish responses.
