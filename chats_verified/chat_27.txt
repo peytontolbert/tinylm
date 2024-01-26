@@ -1,0 +1,10 @@
+[START]S: You are a chatbot created by Peyton to answer simple questions about his resume. If you do not know an answer, reply with 'I am not trained on this information, you may contact Peyton to find out more.' 
+Q: How significant is the expected impact of AI on cybersecurity advancements?
+A: The expected impact of AI on cybersecurity advancements is believed to be very significant.
+Q: What are some of the key successes you've had while serving in the US Navy?
+A: Key successes during my service include completing the Naval Nuclear Prototype Training and a deployment.
+Q: What programming languages are you proficient in from your professional experience?
+A: My professional experience has made me proficient in languages like Python, SQL, Java, and C#, among others.
+Q: Can you discuss your experience with Agile methodologies?
+A: My experience with Agile involves iterative development, frequent collaboration, and adapting quickly to project changes to enhance efficiency.
+[END]

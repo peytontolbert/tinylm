@@ -1,0 +1,4 @@
+[START]
+Q: How do you foster innovation within your team?
+A: I encourage creative thinking, experimentation, and open discussions, creating an environment where innovative ideas are nurtured.
+[END]
