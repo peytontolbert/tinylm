@@ -1,22 +1,21 @@
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
-from utilss import BigramLanguageModel
-import random
+from utils import BigramLanguageModel
+from torch.amp import GradScaler, autocast
 from TextDataset import TextDataset
 from torch.utils.data import DataLoader
-
+import random
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 batch_size = 64 # how many independent sequences will we process in parallel?
 block_size = 128 # what is the maximum context length for predictions?
 learning_rate = 4e-4
 max_iters = 100000
-eval_interval = 400
-eval_iters = 200
+gradient_accumulation_steps = 4
 n_embd = 128  # Increasing embedding size.
 n_head = 6  # More attention heads.
-dropout = 0.0
+dropout = 0.3
 
 torch.manual_seed(1337)
 input = "qaquestions.txt"
@@ -34,23 +33,24 @@ shuffled_text = '\n'.join(lines)
 text = shuffled_text
 print(text[:200])
 
-#All the unique chars
-chars = sorted(list(set(text)))
-vocab_size = len(chars)
-print(''.join(chars))
-print(vocab_size)
+# Tokenize the text into words
+words = text.split()
+vocab = sorted(set(words + ["[UNK]", "[END]"]))
+vocab_size = len(vocab)
+print("Vocab size: ", vocab_size)
+print(' '.join(vocab))
 
-#stoi = { ch:i for i,ch in enumerate(chars) }
-#itos = { i:ch for i,ch in enumerate(chars) }
+stoi = { w:i for i,w in enumerate(vocab) }
+itos = { i:w for i,w in enumerate(vocab) }
 # Let's now split up the data into train and validation sets
 
 model = BigramLanguageModel(vocab_size)  # The model must be the same as the one you trained
-checkpoint = torch.load('model_complete_finetuned2.pth')
+checkpoint = torch.load('new_2024_complete.pth')
 model.load_state_dict(checkpoint['model_state_dict'])
 stoi = checkpoint['stoi']
 itos = checkpoint['itos']
-encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
-decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
+encode = lambda s: [stoi.get(w, stoi["[UNK]"]) for w in s.split()] # encoder: take a string, output a list of integers
+decode = lambda l: ' '.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
 data = torch.tensor(encode(text), dtype=torch.long)
 n = int(0.9*len(data)) # first 90% will be train, rest val
 train_data = data
@@ -67,9 +67,7 @@ val_dataset = TextDataset(val_data, block_size)
 train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-for t in range(block_size):
-    context = x[:t+1]
-    target = y[t]
+scaler = GradScaler()
 m = model.to(device)
 
 
@@ -111,10 +109,14 @@ for epoch in range(num_epochs):
     for xb, yb in train_dataloader:
         xb, yb = xb.to(device), yb.to(device)
         optimizer.zero_grad()
-        logits, total_loss = m(xb, yb)
+        with autocast():
+            logits, total_loss = m(xb, yb)
         if total_loss is not None:
-            total_loss.backward()
-            optimizer.step()
+            scaler.scale(total_loss).backward()
+            if (step_count + 1) % gradient_accumulation_steps == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
             step_count += 1
             if step_count % 500 == 0:
                 print(f"Saving checkpoint at epoch {epoch}, step {step_count}")
@@ -122,7 +124,7 @@ for epoch in range(num_epochs):
                     'model_state_dict': model.state_dict(),
                     'stoi': stoi,
                     'itos': itos
-                }, 'model_complete_finetuned3.pth')
+                }, 'finetuned_2024.pth')
                 print(total_loss.item())
     losses = estimate_loss(model, device, train_dataloader, val_dataloader)
     print(f"Epoch {epoch}: Train Loss {losses['train']:.4f}, Val Loss {losses['val']:.4f}")
@@ -131,7 +133,7 @@ for epoch in range(num_epochs):
         'model_state_dict': model.state_dict(),
         'stoi': stoi,
         'itos': itos
-    }, 'model_complete.pth')
+    }, 'finetuned_2024_complete.pth')
     # Update learning rate using the scheduler
     # scheduler.step()
 
@@ -139,4 +141,4 @@ for epoch in range(num_epochs):
 
 context = torch.zeros((1,1), dtype=torch.long, device=device)
 print(total_loss.item())
-print(decode(m.generate(context, max_new_tokens=300)[0].tolist()))
+print(decode(m.generate(context, max_new_tokens=300)[0].tolist(), itos))

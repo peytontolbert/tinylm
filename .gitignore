@@ -1,0 +1,9 @@
+.aider*
+datasets/
+recordingsold/
+recordingsv1/
+corpus.txt
+*.pth
+httpchatbot.py
+*.txt
+__pycache__/

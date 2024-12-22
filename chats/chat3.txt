@@ -1,5 +1,0 @@
-[START]Q: can you tell me about your projects? A: I've created a number of projects related such as GPT-Pipeline builder, Autonomous Generative Agents, AI Voice cloning, Autonomous Chat Assistants, LLM-Coding Solutions, Computer Vision projects, Database Management and Engineering projects, and many more! [END]
-[START]Q: tell me more about the llm-coder A: I developed an AI-driven coding assistant utilizing NLP and large language models to automate software development from high-level requirements.[END]
-[START]Q: what about your AI agent pipeline? tell me more A: I created an AI agent pipeline UI to develop a no-code solution to creating, managing, and chatting with autonomous AI pipelines.[END]
-[START]Q: what work have you done with cybersecurity? A: I've worked with cybersecurity projects during my time at Tetrad Digital Integrity and Apex Systems. I developed databases and dashboards for DoD cybersecurity performance and analytics.[END]
-[START]Q: can you tell me more? A: I am not trained on this information, you may contact Peyton to find out more.[END]

@@ -6,7 +6,7 @@ import inspect
 
 n_embd = 128
 block_size = 256 # what is the maximum context length for predictions?
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0")
 
 class MoE(nn.Module):
     def __init__(self, n_embd, num_experts, expert_layer_size, capacity_factor=1.25):
@@ -17,22 +17,15 @@ class MoE(nn.Module):
         self.capacity_factor = capacity_factor
 
     def forward(self, x):
-        # Gating mechanism: decide which expert to use for each element in the batch
         gating_scores = F.softmax(self.gate(x), dim=-1)
-        #print("gating_scores: ", gating_scores.shape)
         # Get the index of the expert with highest gate score per token
         # The shape of expert_assignment becomes [Batch, Seq Len]
         expert_assignment = torch.argmax(gating_scores, dim=-1)
-        #print("expert_assignment: ", expert_assignment.shape)
         # Determine capacity based on the input size and capacity factor
         capacity = max(1, math.ceil(x.size(0) * self.capacity_factor / self.num_experts))
         #capacity = max(1, capacity_pre / self.num_experts)
-        #print("x.size(0): ", x.size(0))
-        #print("self.capacity_factor: ", self.capacity_factor)
-        #print("self.num_experts: ", self.num_experts)
-        #print("capacity: ", capacity)
-        outputs = x.new_zeros(*x.size())
-        expert_load = x.new_zeros(self.num_experts)
+        outputs = torch.zeros_like(x, dtype=x.dtype)
+        expert_load = torch.zeros(self.num_experts, dtype=torch.int32, device=x.device)
         #print("expert_load: ", expert_load.shape)
         #expert_index = torch.argmax(gating_scores, dim=-1)
         # Applying each expert to the corresponding elements
@@ -46,7 +39,7 @@ class MoE(nn.Module):
             # Assign and process tokens by the expert network where mask is True
             if tokens_to_expert_mask.any():
                 expert_input = x.masked_select(tokens_to_expert_mask).view(-1, x.size(-1))
-                expert_output = self.experts[i](expert_input)  # Process selected input through the current expert
+                expert_output = self.experts[i](expert_input).to(x.dtype)  # Process selected input through the current expert
 
                 # Scatter computed expert outputs back to their original positions in the outputs tensor
                 outputs = outputs.masked_scatter(tokens_to_expert_mask, expert_output.view(*expert_input.shape))
@@ -144,12 +137,12 @@ class MultiHeadAttention(nn.Module):
 class FeedForward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
 
-    def __init__(self, n_embd):
+    def __init__(self, input_size):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, 4*n_embd),
+            nn.Linear(input_size, 4*input_size),
             nn.ReLU(),
-            nn.Linear(4*n_embd, n_embd),
+            nn.Linear(4*input_size, input_size),
         )
     
     def forward(self, x):
@@ -163,6 +156,7 @@ class BigramLanguageModel(nn.Module):
         # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.n_embd = n_embd
         # self.sa_head = Head(n_embd)
         self.blocks = nn.Sequential(
             BlockWithMoE(n_embd, n_head=2, num_experts=num_experts, expert_layer_size=expert_layer_size),
@@ -176,10 +170,16 @@ class BigramLanguageModel(nn.Module):
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
-        tok_emb = self.token_embedding_table(idx) # (B,T,C)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
+        tok_emb = self.token_embedding_table(idx)  # (B,T,C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))  # (T,C)
         x = tok_emb + pos_emb # (B,T,C)
+        aux_loss = 0.0
         x = self.blocks(x) # (B,T,C)
+        # If your MoE blocks return a tuple (output, aux_loss):
+        if isinstance(x, tuple):
+            x, aux_loss = x  # Unpack the output and auxiliary loss
+            aux_loss = aux_loss.sum()  # Sum auxiliary losses from multiple layers (if applicable)
+        
         logits = self.lm_head(x) # (B,T,vocab_size)
         
         if targets is None:
@@ -193,7 +193,7 @@ class BigramLanguageModel(nn.Module):
 
         return logits, loss
     
-    def generate(self, idx, max_new_tokens, temperature=0):
+    def generate(self, idx, max_new_tokens, itos, temperature=.1, prob_threshold=0.2):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
             # crop idx to the last block_size tokens
@@ -202,12 +202,18 @@ class BigramLanguageModel(nn.Module):
             logits, loss = self(idx_cond)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
-            # apply softmax to get probabilities
+            # apply temperature and softmax to get probabilities
+            logits = logits / temperature
             probs = F.softmax(logits, dim=-1) # (B, C)
             # sample from the distribution
+            max_prob, idx_next = torch.max(probs, dim=-1, keepdim=True)
+            if max_prob.item() < prob_threshold:
+                return "This is not in my training data, please contact Peyton for more information."
             idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            # append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+            # Check if the generated token is the [END] token
+            if itos[idx_next.item()] == "[END]":
+                break
+
+            # Append sampled index to the running sequence
+            idx = torch.cat((idx, idx_next), dim=1)  # (B, T+1)
         return idx
-
-

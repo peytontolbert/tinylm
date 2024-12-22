@@ -1,2 +1,0 @@
-[START]Q: how many years of experience do you have? A: I am not trained on this information, you may contact Peyton to find out more.[END]
-[START]Q: what is your knowledge of NLP, Machine Learning Modelling to train the data? A: In my role as a Cyber Security Database Developer at Tetrad Digital Integrity. My professional journey includes a contract position as an SQL Database Developer with Apex Systems.[END]

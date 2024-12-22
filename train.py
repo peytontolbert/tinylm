@@ -1,18 +1,37 @@
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
-from torch.nn import functional as f
+from torch.nn import functional as F
+from torch.optim import AdamW
+from torch.amp import GradScaler, autocast
+from utils import BigramLanguageModel
+from moe import MoE
 import math
 import random
-from torch.utils.data import DataLoader
-from TextDataset import TextDataset
-from utils import BigramLanguageModel
+from torch.utils.data import Dataset, DataLoader
 
 # Empties the entire PyTorch CUDA cache
 torch.cuda.empty_cache()
-print("CUDA Available:", torch.cuda.is_available())
-print("CUDA Device Count:", torch.cuda.device_count())
-print("Current CUDA Device:", torch.cuda.current_device())
+
+
+class TextDataset(Dataset):
+    def __init__(self, encoded_text, block_size):
+        # Assuming encoded_text is a list of integers representing encoded characters
+        self.data = encoded_text
+        self.block_size = block_size
+
+    def __len__(self):
+        # The length is the number of blocks we can make
+        return len(self.data) - self.block_size - 1
+
+    def __getitem__(self, idx):
+        # Get the sequence of tokens that starts at this index
+        chunk = self.data[idx:idx + self.block_size + 1]
+        # Input sequence (x) is the first block_size characters
+        # Target sequence (y) is the last block_size characters
+        x = chunk[:-1]
+        y = chunk[1:]
+        return x, y
 
 
 # hyperparameters
@@ -24,13 +43,8 @@ lr_decay_iters = 5000 # should be ~= max_iters
 max_iters = 5000 # total number of steps to train for
 eval_interval = 1
 learning_rate = .01
-eval_iters = 10
-min_lr = 1e-1 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-n_embd = 128  # Increasing embedding size.
-n_head = 6  # More attention heads.
-n_layer = 4  # More layers in the model.
-dropout = 0.0
+min_lr = 1e-2 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+device = torch.device("cuda:0")
 # ------------
 
 torch.manual_seed(1337)
@@ -48,16 +62,17 @@ shuffled_text = '\n'.join(lines)
 text = shuffled_text
 print(text[:200])
 #All the unique chars
-chars = sorted(list(set(text)))
-vocab_size = len(chars)
+# Tokenize the text into words
+words = text.split()
+vocab = sorted(set(words + ["[UNK]", "[END]"]))
+vocab_size = len(vocab)
 print("Vocab size: ", vocab_size)
-print(''.join(chars))
-print(vocab_size)
+print(' '.join(vocab))
 
-stoi = { ch:i for i,ch in enumerate(chars) }
-itos = { i:ch for i,ch in enumerate(chars) }
-encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
-decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
+stoi = { w:i for i,w in enumerate(vocab) }
+itos = { i:w for i,w in enumerate(vocab) }
+encode = lambda s: [stoi.get(w, stoi["[UNK]"]) for w in s.split()] # encoder: take a string, output a list of integers
+decode = lambda l: ' '.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
 
 # Let's now split up the data into train and validation sets
 data = torch.tensor(encode(text), dtype=torch.long)
@@ -114,6 +129,7 @@ m = model.to(device)
 # create a PyTorch optimizer
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 
+scaler = GradScaler('cuda')
 num_epochs = 10
 step_count = 0
 for epoch in range(num_epochs):
@@ -122,18 +138,22 @@ for epoch in range(num_epochs):
     for xb, yb in train_dataloader:
         xb, yb = xb.to(device), yb.to(device)
         optimizer.zero_grad()
-        logits, total_loss = m(xb, yb)
+        with autocast('cuda'):
+            logits, total_loss = m(xb, yb)
         if total_loss is not None:
-            total_loss.backward()
-            optimizer.step()
+            scaler.scale(total_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             step_count += 1
-            if step_count % 1000 == 0:
+            if step_count % 100 == 0:  # Log every 100 steps
+                print(f"step count: {step_count}")
+            if step_count % 1000 == 0:  # Save checkpoint every 1000 steps
                 print(f"Saving checkpoint at epoch {epoch}, step {step_count}")
                 torch.save({
                     'model_state_dict': model.state_dict(),
                     'stoi': stoi,
                     'itos': itos
-                }, 'model_complete.pth')
+                }, 'new_2024_complete.pth')
                 print(total_loss.item())
     losses = estimate_loss(model, device, train_dataloader, val_dataloader)
     print(f"Epoch {epoch}: Train Loss {losses['train']:.4f}, Val Loss {losses['val']:.4f}")
